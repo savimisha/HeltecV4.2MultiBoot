@@ -93,17 +93,17 @@ PARTITIONS = load_partitions()
 #   0xF30000 - 0xFB7FFF : Slot 3 FS backup (544KB)
 #   0xFB8000 - 0xFBFFFF : Active NVS (32KB, in partition table)
 #   0xFC0000 - 0xFDFFFF : NVS backups (4 × 32KB = 128KB)
-NVS_BACKUP_BASE  = 0xFC0000
+NVS_BACKUP_BASE  = 0xF18000
 MAIN_NVS_SIZE    = 0x8000     # 32KB per slot
-FS_PARTITION_OFF = 0xD10000
-FS_PARTITION_SZ  = 0x88000    # 544KB
-FS_BACKUP_BASE   = 0xD98000
+FS_PARTITION_OFF = 0x610000
+FS_PARTITION_SZ  = 0x300000    # 544KB
+FS_BACKUP_BASE   = 0x910000
 
-SLOT_NAMES = ["ota_0", "ota_1", "ota_2", "ota_3"]
+SLOT_NAMES = ["ota_0", "ota_1"]
 
 # OTA region bounds (fixed by the surrounding flash map).
 OTA_REGION_START = 0x110000
-OTA_REGION_END   = 0xD10000   # exclusive; equals FS_PARTITION_OFF
+OTA_REGION_END   = 0x610000   # exclusive; equals FS_PARTITION_OFF
 OTA_REGION_TOTAL = OTA_REGION_END - OTA_REGION_START   # 12 MB
 OTA_ALIGN        = 0x10000    # 64 KB (ESP-IDF OTA app alignment)
 
@@ -120,7 +120,7 @@ def write_partitions_csv(slot_sizes, csv_path=PARTITIONS_CSV):
     slot_sizes is a 4-tuple of ints; must sum to OTA_REGION_TOTAL and each
     must be a positive multiple of OTA_ALIGN.
     """
-    assert len(slot_sizes) == 4, "need 4 slot sizes"
+    assert len(slot_sizes) == 2, "need 4 slot sizes"
     assert all(s > 0 and s % OTA_ALIGN == 0 for s in slot_sizes), \
         f"slot sizes must be positive multiples of {hex(OTA_ALIGN)}"
     assert sum(slot_sizes) == OTA_REGION_TOTAL, \
@@ -161,7 +161,7 @@ def write_partitions_csv(slot_sizes, csv_path=PARTITIONS_CSV):
 SEL_CFG_MAGIC = 0xB0075E1C
 SEL_CFG_SIZE = 0x1000  # 4KB sector
 SEL_SLOT_NAME_LEN = 32
-SEL_CFG_STRUCT_FMT = '<IB3x' + f'{SEL_SLOT_NAME_LEN}s' * 4  # 4+1+3+4*32 = 136 bytes
+SEL_CFG_STRUCT_FMT = '<IB3x' + f'{SEL_SLOT_NAME_LEN}s' * 2  # 4+1+3+4*32 = 136 bytes
 
 
 def slot_name_from_path(path):
@@ -178,7 +178,7 @@ def build_sel_cfg_bin(slot_names, last_slot=0xFF):
                for n in slot_names]
     # struct with 32s pads with NULs and truncates — ensure NUL terminator.
     rec = struct.pack(SEL_CFG_STRUCT_FMT, SEL_CFG_MAGIC, last_slot & 0xFF,
-                      names_b[0], names_b[1], names_b[2], names_b[3])
+                      names_b[0], names_b[1])
     # Pad to full sector with 0xFF (matches flash erased state).
     return rec + b'\xFF' * (SEL_CFG_SIZE - len(rec))
 
@@ -191,7 +191,7 @@ def read_sel_cfg(esptool, port, baud):
     that case last_slot is 0xFF and names are all ''. Callers doing a
     read-modify-write must treat ok=False as "no baseline to preserve".
     """
-    empty = (False, 0xFF, [''] * 4)
+    empty = (False, 0xFF, [''] * 2)
     with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
         tmp_path = tmp.name
     try:
@@ -369,8 +369,8 @@ def cmd_flash_slot(args):
     """Flash a single firmware to an OTA slot."""
     esptool = find_esptool()
 
-    if args.slot < 0 or args.slot > 3:
-        print("ERROR: Slot must be 0-3")
+    if args.slot < 0 or args.slot > 1:
+        print("ERROR: Slot must be 0-1")
         sys.exit(1)
 
     print(f"Flashing firmware to slot {args.slot}:")
@@ -454,9 +454,9 @@ def cmd_flash_all(args):
     run_esptool(esptool, args.port, args.baud, boot_args)
 
     # ---- Invocations 2..N: one per populated slot ----
-    slot_args = [args.slot0, args.slot1, args.slot2, args.slot3]
+    slot_args = [args.slot0, args.slot1]
     tmp_files = []
-    slot_names = [''] * 4
+    slot_names = [''] * 2
     try:
         for i, fw in enumerate(slot_args):
             if not fw:
@@ -531,18 +531,18 @@ def cmd_info(args):
     ok, _last_slot, names = read_sel_cfg(esptool, args.port, args.baud)
     slot_labels = [n if n else f"slot {i}" for i, n in enumerate(names)]
     if not ok:
-        slot_labels = [f"slot {i}" for i in range(4)]
+        slot_labels = [f"slot {i}" for i in range(2)]
 
     print()
     print("Per-Firmware Data Isolation Areas")
     print("-" * 60)
     print("  NVS Backups:")
-    for i in range(4):
+    for i in range(2):
         nvs_off = NVS_BACKUP_BASE + i * MAIN_NVS_SIZE
         print(f"    Slot {i} ({slot_labels[i]}): {hex(nvs_off)} ({MAIN_NVS_SIZE // 1024}KB)")
     print(f"  Active SPIFFS: {hex(FS_PARTITION_OFF)} ({FS_PARTITION_SZ // 1024}KB)")
     print("  FS Backups:")
-    for i in range(4):
+    for i in range(2):
         fs_off = FS_BACKUP_BASE + i * FS_PARTITION_SZ
         print(f"    Slot {i} ({slot_labels[i]}): {hex(fs_off)} ({FS_PARTITION_SZ // 1024}KB)")
 
@@ -639,7 +639,7 @@ def build_recommended_layout(slot_paths, headroom=0.25):
     remainder = OTA_REGION_TOTAL - sum(target)
     bonus = None
     if remainder > 0:
-        bonus = max(range(4), key=lambda i: fw_sizes[i])
+        bonus = max(range(2), key=lambda i: fw_sizes[i])
         target[bonus] += remainder
     return target, bonus
 
@@ -669,13 +669,13 @@ def cmd_install(args):
     print()
 
     # 2. Current layout
-    current_sizes = [slot_size(i) for i in range(4)]
+    current_sizes = [slot_size(i) for i in range(2)]
     print(f"Current layout: [{', '.join(format_mb(s) for s in current_sizes)}]\n")
 
     # 3. Slot firmware selection
     print("Pick firmware for each slot (number, or blank to leave empty):")
-    slot_paths = [None] * 4
-    for i in range(4):
+    slot_paths = [None] * 2
+    for i in range(2):
         while True:
             raw = input(f"  Slot {i}: ").strip()
             if raw == '':
@@ -707,7 +707,7 @@ def cmd_install(args):
 
     print("\nRecommended sizes (firmware + ~25% headroom, "
           "remainder given to the largest firmware's slot):")
-    for i in range(4):
+    for i in range(2):
         path = slot_paths[i]
         if path:
             note = f"fw {format_mb(effective_firmware_size(path))}"
@@ -723,13 +723,13 @@ def cmd_install(args):
     print("slot to absorb the remainder, or enter a size like '3', '2048K',")
     print("'0x300000', etc.\n")
 
-    new_sizes = [None] * 4
+    new_sizes = [None] * 2
     auto_slot = None
     while True:
-        new_sizes = [None] * 4
+        new_sizes = [None] * 2
         auto_slot = None
         ok = True
-        for i in range(4):
+        for i in range(2):
             fw_note = ""
             if slot_paths[i]:
                 fw_need = effective_firmware_size(slot_paths[i])
@@ -767,7 +767,7 @@ def cmd_install(args):
             continue
 
         if auto_slot is not None:
-            used = sum(new_sizes[j] for j in range(4) if j != auto_slot)
+            used = sum(new_sizes[j] for j in range(2) if j != auto_slot)
             remainder = OTA_REGION_TOTAL - used
             if remainder <= 0 or remainder % OTA_ALIGN != 0:
                 print(f"    ERROR: 'auto' slot would get {remainder} bytes (need > 0, "
@@ -786,7 +786,7 @@ def cmd_install(args):
 
         # Per-slot capacity check
         overflow = False
-        for i in range(4):
+        for i in range(2):
             if slot_paths[i]:
                 fw_need = effective_firmware_size(slot_paths[i])
                 if fw_need > new_sizes[i]:
@@ -803,7 +803,7 @@ def cmd_install(args):
     print("\nProposed layout:")
     off = OTA_REGION_START
     offsets = []
-    for i in range(4):
+    for i in range(2):
         offsets.append(off)
         name = os.path.basename(slot_paths[i]) if slot_paths[i] else "(empty)"
         fw_size = effective_firmware_size(slot_paths[i]) if slot_paths[i] else 0
@@ -815,11 +815,11 @@ def cmd_install(args):
     print(f"                        {format_mb(OTA_REGION_TOTAL):>7} total\n")
 
     # 6. Diff
-    layout_changed = any(new_sizes[i] != current_sizes[i] for i in range(4))
+    layout_changed = any(new_sizes[i] != current_sizes[i] for i in range(2))
     if layout_changed:
         print("Changes vs current partitions.csv:")
         cur_off = OTA_REGION_START
-        for i in range(4):
+        for i in range(2):
             if new_sizes[i] != current_sizes[i] or offsets[i] != cur_off:
                 note = ""
                 if offsets[i] != cur_off:
@@ -874,8 +874,6 @@ def cmd_install(args):
     fa.selector = os.path.join(PIO_BUILD_DIR, "firmware.bin")
     fa.slot0 = slot_paths[0]
     fa.slot1 = slot_paths[1]
-    fa.slot2 = slot_paths[2]
-    fa.slot3 = slot_paths[3]
     cmd_flash_all(fa)
 
 
@@ -900,12 +898,10 @@ def main():
                        help="Path to selector .bin")
     p_all.add_argument("--slot0", help="Firmware .bin for slot 0")
     p_all.add_argument("--slot1", help="Firmware .bin for slot 1")
-    p_all.add_argument("--slot2", help="Firmware .bin for slot 2")
-    p_all.add_argument("--slot3", help="Firmware .bin for slot 3")
 
     # flash-slot
     p_slot = sub.add_parser("flash-slot", help="Flash firmware to a single slot")
-    p_slot.add_argument("slot", type=int, choices=[0, 1, 2, 3],
+    p_slot.add_argument("slot", type=int, choices=[0, 1],
                         help="Slot number (0-3)")
     p_slot.add_argument("firmware", help="Path to firmware .bin")
 

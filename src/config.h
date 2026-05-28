@@ -28,7 +28,7 @@
 
 // --- Firmware Slots ---
 
-#define MAX_SLOTS       4
+#define MAX_SLOTS       2
 
 // Max stored slot-name length (null-terminated). Written by flash_firmware.py
 // from the .bin filename, read at menu display time. Long names are
@@ -58,11 +58,11 @@
 
 #define FLASH_SECTOR_SIZE   0x1000
 
-#define MAIN_NVS_OFFSET     0xFB8000    // Main NVS partition (from partitions.csv)
+#define MAIN_NVS_OFFSET     0xF10000    // Main NVS partition (from partitions.csv)
 #define MAIN_NVS_SIZE       0x8000      // 32KB (must match partitions.csv)
 
 // NVS backup areas: 4 × 32KB = 128KB at 0xFC0000-0xFDFFFF
-#define NVS_BACKUP_BASE     0xFC0000
+#define NVS_BACKUP_BASE     0xF18000
 #define NVS_BACKUP_OFFSET(n) (NVS_BACKUP_BASE + (n) * MAIN_NVS_SIZE)
 
 // --- Per-firmware filesystem isolation ---
@@ -82,9 +82,9 @@
 //   0xFC0000 - 0xFDFFFF : NVS backups (4 × 32KB = 128KB)
 //   0xFE0000 - 0xFFFFFF : unused (128KB tail)
 
-#define FS_PARTITION_OFFSET 0xD10000    // Active SPIFFS partition (from partitions.csv)
-#define FS_PARTITION_SIZE   0x88000     // 544KB (must match partitions.csv)
+#define FS_PARTITION_OFFSET 0x610000    // Active SPIFFS partition (from partitions.csv)
+#define FS_PARTITION_SIZE   0x300000     // 544KB (must match partitions.csv)
 
 // FS backup areas: 4 × 544KB = 2176KB at 0xD98000-0xFC7FFF
-#define FS_BACKUP_BASE      0xD98000
+#define FS_BACKUP_BASE      0x910000
 #define FS_BACKUP_OFFSET(n) (FS_BACKUP_BASE + (n) * FS_PARTITION_SIZE)
